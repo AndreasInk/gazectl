@@ -1,4 +1,4 @@
-# swivl
+# gazectl
 
 Head tracking display focus switcher for macOS + [Aerospace](https://github.com/nikitabobko/AerospaceWM).
 
@@ -7,13 +7,13 @@ Uses your webcam and MediaPipe to detect which way your head is turned, then swi
 ## Install
 
 ```bash
-npm i -g swivl
+npm i -g gazectl
 ```
 
 Or run directly:
 
 ```bash
-npx swivl
+npx gazectl
 ```
 
 Requires Python 3.9+ and [Aerospace](https://github.com/nikitabobko/AerospaceWM). First run sets up a Python venv and downloads the MediaPipe model automatically.
@@ -22,30 +22,30 @@ Requires Python 3.9+ and [Aerospace](https://github.com/nikitabobko/AerospaceWM)
 
 ```bash
 # First run — calibrates automatically
-swivl
+gazectl
 
 # With verbose logging
-swivl --verbose
+gazectl --verbose
 
 # Force recalibration
-swivl --calibrate
+gazectl --calibrate
 ```
 
-On first run, swivl asks you to look at each monitor and press Enter. It samples your head angle for 2 seconds per monitor, then saves calibration to `~/.local/share/swivl/calibration.json`.
+On first run, gazectl asks you to look at each monitor and press Enter. It samples your head angle for 2 seconds per monitor, then saves calibration to `~/.local/share/gazectl/calibration.json`.
 
 ## Options
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--calibrate` | off | Force recalibration |
-| `--calibration-file` | `~/.local/share/swivl/calibration.json` | Custom calibration path |
+| `--calibration-file` | `~/.local/share/gazectl/calibration.json` | Custom calibration path |
 | `--camera` | 0 | Camera index |
 | `--preview` | off | Show camera preview (steals focus — calibration only) |
 | `--verbose` | off | Print yaw angle continuously |
 
 ## How it works
 
-1. **Calibrate** — look at each monitor, swivl records the yaw angle
+1. **Calibrate** — look at each monitor, gazectl records the yaw angle
 2. **Track** — MediaPipe Face Landmarker detects head yaw in real-time (~30fps)
 3. **Switch** — when yaw crosses the midpoint between calibrated angles, fires `aerospace focus-monitor`
 

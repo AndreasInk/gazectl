@@ -1,13 +1,13 @@
 {
-  "name": "swivl",
+  "name": "gazectl",
   "version": "0.1.0",
   "description": "Head tracking display focus switcher for macOS + Aerospace",
   "bin": {
-    "swivl": "bin/swivl"
+    "gazectl": "bin/gazectl"
   },
   "files": [
-    "bin/swivl",
-    "swivl.py",
+    "bin/gazectl",
+    "gazectl.py",
     "requirements.txt"
   ],
   "keywords": [
@@ -25,7 +25,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/sahajjain/swivl.git"
+    "url": "git+https://github.com/jnsahaj/gazectl.git"
   },
-  "homepage": "https://github.com/sahajjain/swivl"
+  "homepage": "https://github.com/jnsahaj/gazectl"
 }

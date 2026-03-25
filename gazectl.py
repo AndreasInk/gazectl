@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-swivl - Head tracking display focus switcher for macOS + Aerospace.
+gazectl - Head tracking display focus switcher for macOS + Aerospace.
 
 Uses your webcam + MediaPipe Face Landmarker to detect head yaw direction,
 then calls `aerospace focus-monitor` to switch display focus.
@@ -39,7 +39,7 @@ MODEL_POINTS = np.array([
 LANDMARK_IDS = [1, 152, 263, 33, 287, 57]
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-SWIVL_DATA = os.environ.get("SWIVL_HOME", os.path.expanduser("~/.local/share/swivl"))
+SWIVL_DATA = os.environ.get("SWIVL_HOME", os.path.expanduser("~/.local/share/gazectl"))
 DEFAULT_CALIBRATION_PATH = os.path.join(SWIVL_DATA, "calibration.json")
 
 
@@ -273,7 +273,7 @@ def main():
         model_path = os.path.join(SWIVL_DATA, "face_landmarker.task")
     if not os.path.exists(model_path):
         print(f"  [error] Model file not found")
-        print("  Run: swivl (the bin wrapper downloads it automatically)")
+        print("  Run: gazectl (the bin wrapper downloads it automatically)")
         sys.exit(1)
 
     latest_landmarks = [None]

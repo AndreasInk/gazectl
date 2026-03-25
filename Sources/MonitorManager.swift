@@ -37,31 +37,21 @@ enum MonitorManager {
         return nil
     }
 
-    /// Focus a monitor by moving the cursor and/or clicking as needed.
-    ///
-    /// - `focusedMonitor`: the monitor macOS currently considers focused
-    ///   (tracked by the caller based on gaze, NOT cursor position).
-    static func focusMonitor(_ id: Int, focusedMonitor: Int?) {
-        let cursorOn = currentMonitor()
-        let alreadyFocused = focusedMonitor == id
-        let cursorAlreadyThere = cursorOn == id
+    static func focusMonitor(_ id: Int) {
+        let cursorAlreadyThere = currentMonitor() == id
+        let alreadyFocused = focusedMonitor() == id
 
-        // Case 4: already focused and cursor already there — nothing to do
         if alreadyFocused && cursorAlreadyThere { return }
 
         let displayID = CGDirectDisplayID(id)
         let bounds = CGDisplayBounds(displayID)
         let center = CGPoint(x: bounds.midX, y: bounds.midY)
 
-        // Cases 1 & 3: cursor is on the wrong monitor — move it
         if !cursorAlreadyThere {
             CGWarpMouseCursorPosition(center)
         }
 
-        // Cases 1 & 2: monitor isn't focused — click to focus
         if !alreadyFocused {
-            // If cursor was already on the target, click where it is (don't move it).
-            // CGEvent uses top-left origin coordinates.
             let clickPos = cursorAlreadyThere
                 ? CGEvent(source: nil)?.location ?? center
                 : center
@@ -70,6 +60,13 @@ enum MonitorManager {
             mouseDown?.post(tap: .cghidEventTap)
             mouseUp?.post(tap: .cghidEventTap)
         }
+    }
+
+    /// The monitor that macOS currently considers focused (has the key window).
+    static func focusedMonitor() -> Int? {
+        guard let main = NSScreen.main else { return nil }
+        let screenNumber = main.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
+        return screenNumber.map { Int($0) }
     }
 
     private static func screenName(for displayID: CGDirectDisplayID) -> String? {

@@ -165,7 +165,7 @@ while running {
         let now = Date()
         if target != currentMonitor && now.timeIntervalSince(lastSwitchTime) >= switchCooldown {
             let name = monitors.first { $0.id == target }?.name ?? "?"
-            MonitorManager.focusMonitor(target, focusedMonitor: currentMonitor)
+            MonitorManager.focusMonitor(target)
             currentMonitor = target
             lastSwitchTime = now
             CLI.printFocusSwitch(name)

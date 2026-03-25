@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 
 // MARK: - CLI argument parsing
 
@@ -149,26 +150,57 @@ CLI.printStartupSummary(
 )
 
 // 5. Tracking loop
-var currentMonitor = MonitorManager.currentMonitor()
+let initialFocusedMonitor = MonitorManager.focusedMonitor()
+var focusedMonitor = initialFocusedMonitor ?? MonitorManager.currentMonitor()
+var gazeMonitor = focusedMonitor
+var lastAppliedGazeMonitor = gazeMonitor
+var lastLeftMouseDown = CGEventSource.buttonState(.combinedSessionState, button: .left)
 let switchCooldown: TimeInterval = 0.5   // minimum seconds between switches
 var lastSwitchTime = Date.distantPast
 
 while running {
     if let yaw = faceTracker.latestYaw {
-        let target = Calibration.targetMonitor(yaw: yaw, calibration: cal, currentMonitor: currentMonitor ?? 0)
+        let cursorMonitor = MonitorManager.currentMonitor()
+        let leftMouseDown = CGEventSource.buttonState(.combinedSessionState, button: .left)
+        if lastLeftMouseDown && !leftMouseDown, let cursorMonitor {
+            focusedMonitor = cursorMonitor
+        } else if let detectedFocusedMonitor = MonitorManager.focusedMonitor() {
+            focusedMonitor = detectedFocusedMonitor
+        }
+        lastLeftMouseDown = leftMouseDown
+
+        let target = Calibration.targetMonitor(
+            yaw: yaw,
+            calibration: cal,
+            currentMonitor: gazeMonitor ?? focusedMonitor ?? 0
+        )
+        gazeMonitor = target
 
         if config.verbose {
             let targetName = monitors.first { $0.id == target }?.name ?? "?"
             CLI.printTrackingStatus(yaw: yaw, targetName: targetName)
         }
 
-        let now = Date()
-        if target != currentMonitor && now.timeIntervalSince(lastSwitchTime) >= switchCooldown {
-            let name = monitors.first { $0.id == target }?.name ?? "?"
-            MonitorManager.focusMonitor(target)
-            currentMonitor = target
-            lastSwitchTime = now
-            CLI.printFocusSwitch(name)
+        if gazeMonitor != lastAppliedGazeMonitor {
+            let transition = MonitorManager.transition(
+                to: target,
+                focusedMonitor: focusedMonitor,
+                cursorMonitor: cursorMonitor
+            )
+
+            if transition.requiresAction {
+                let now = Date()
+                if now.timeIntervalSince(lastSwitchTime) >= switchCooldown {
+                    let name = monitors.first { $0.id == target }?.name ?? "?"
+                    MonitorManager.focusMonitor(target, transition: transition)
+                    focusedMonitor = target
+                    lastAppliedGazeMonitor = target
+                    lastSwitchTime = now
+                    CLI.printFocusSwitch(name)
+                }
+            } else {
+                lastAppliedGazeMonitor = target
+            }
         }
     }
     Thread.sleep(forTimeInterval: 0.033)

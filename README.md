@@ -17,9 +17,9 @@
 
 ---
 
-`gazectl` uses your webcam to detect which monitor you're looking at and automatically switches focus to it. It uses Apple's Vision framework for real-time face tracking and works with the [Aerospace](https://github.com/nikitabobko/AerospaceWM) tiling window manager.
+`gazectl` uses your webcam to detect which monitor you're looking at and automatically switches focus to it. It uses Apple's Vision framework for real-time face tracking and works with the [Aerospace](https://github.com/nikitabobko/AeroSpace) tiling window manager.
 
-> macOS only. Requires macOS 14+ and [Aerospace](https://github.com/nikitabobko/AerospaceWM).
+> macOS only. Requires macOS 14+ and [Aerospace](https://github.com/nikitabobko/AeroSpace).
 
 ## Install
 

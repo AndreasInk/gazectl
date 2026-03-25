@@ -74,16 +74,16 @@ enum CLI {
             "╚██████╔╝██║  ██║███████╗███████╗╚██████╗   ██║   ███████╗",
             " ╚═════╝ ╚═╝  ╚═╝╚══════╝╚══════╝ ╚═════╝   ╚═╝   ╚══════╝",
         ]
-        // Gradient from bright to dim (256-color palette)
-        let colors = [250, 248, 245, 243, 240, 238]
+        // Teal/cyan gradient (256-color palette)
+        let colors = [116, 109, 73, 67, 66, 59]
 
         print()
         for (i, line) in lines.enumerated() {
             let color = colors[i % colors.count]
             print("\(fg256(color))\(line)\(Style.reset)")
         }
-        print()
-        print("\(Style.dim)  head tracking display switcher\(Style.reset)")
+        print("\(fg256(59))  ─────────────────────────────────────────────────────\(Style.reset)")
+        print("\(fg256(109))  head tracking display switcher\(Style.reset)")
         print()
     }
 

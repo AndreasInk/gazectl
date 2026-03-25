@@ -34,9 +34,9 @@ enum Calibration {
                 withJSONObject: calibration, options: [.prettyPrinted, .sortedKeys]
             )
             try data.write(to: URL(fileURLWithPath: path))
-            print("  Saved calibration to \(path)")
+            CLI.success("Saved calibration")
         } catch {
-            print("  [error] Failed to save calibration: \(error)")
+            CLI.error("Failed to save calibration: \(error)")
         }
     }
 
@@ -45,15 +45,23 @@ enum Calibration {
     static func sampleYaw(faceTracker: FaceTracker, duration: TimeInterval = 2.0) -> Double? {
         var samples: [Double] = []
         let start = Date()
+        let expectedSamples = Int(duration / 0.033)
+
         while Date().timeIntervalSince(start) < duration {
             if let yaw = faceTracker.latestYaw {
                 samples.append(yaw)
-                print("    sampling... yaw: \(String(format: "%+.1f", yaw))° (\(samples.count) samples)", terminator: "\r")
-                fflush(stdout)
+                CLI.printSamplingProgress(
+                    yaw: yaw,
+                    sampleCount: samples.count,
+                    totalSamples: expectedSamples
+                )
             }
             Thread.sleep(forTimeInterval: 0.033)
         }
-        print()
+        // Clear the progress line
+        print("\(Style.clearLine)\r", terminator: "")
+        fflush(stdout)
+
         guard !samples.isEmpty else { return nil }
         let sorted = samples.sorted()
         return sorted[sorted.count / 2]
@@ -65,48 +73,41 @@ enum Calibration {
         faceTracker: FaceTracker,
         monitors: [AerospaceMonitor.Monitor]
     ) -> [String: Double] {
-        print("\n  === Calibration ===")
-        print("  Found \(monitors.count) monitors:\n")
-        for m in monitors {
-            print("    [\(m.id)] \(m.name)")
-        }
+        CLI.printCalibrationHeader(monitorCount: monitors.count)
 
         var calibration: [String: Double] = [:]
-        print()
 
-        for m in monitors {
-            print("  Look at \"\(m.name)\" and press Enter...", terminator: "")
-            fflush(stdout)
+        for (index, m) in monitors.enumerated() {
+            CLI.printCalibrationPrompt(m.name, step: index + 1, total: monitors.count)
             _ = readLine()
 
             var yaw = sampleYaw(faceTracker: faceTracker)
             if yaw == nil {
-                print("    [error] No face detected. Try again.")
-                print("  Look at \"\(m.name)\" and press Enter...", terminator: "")
-                fflush(stdout)
+                CLI.warning("No face detected. Try again.")
+                CLI.printCalibrationPrompt(m.name, step: index + 1, total: monitors.count)
                 _ = readLine()
                 yaw = sampleYaw(faceTracker: faceTracker)
                 if yaw == nil {
-                    print("    [error] Still no face detected. Skipping.")
+                    CLI.error("Still no face detected. Skipping.")
                     continue
                 }
             }
 
             calibration[String(m.id)] = yaw!
-            print("    \(m.name): \(String(format: "%+.1f", yaw!))°")
+            CLI.printCalibrationResult(m.name, yaw: yaw!)
         }
 
         if calibration.count < 2 {
-            print("\n  [error] Need at least 2 calibrated monitors.")
+            CLI.error("Need at least 2 calibrated monitors.")
             exit(1)
         }
 
-        print("\n  Calibration complete:")
         let sorted = calibration.sorted { $0.value < $1.value }
-        for (idStr, yaw) in sorted {
+        let entries: [(name: String, yaw: Double)] = sorted.map { idStr, yaw in
             let name = monitors.first { String($0.id) == idStr }?.name ?? "?"
-            print("    \(name) (id \(idStr)): \(String(format: "%+.1f", yaw))°")
+            return (name: name, yaw: yaw)
         }
+        CLI.printCalibrationSummary(entries)
 
         return calibration
     }

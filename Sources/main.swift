@@ -18,22 +18,6 @@ struct Config {
     }
 }
 
-func printUsage() {
-    print("""
-    usage: gazectl [options]
-
-    Head tracking display focus switcher for macOS + Aerospace.
-
-    options:
-      --calibrate            Force recalibration
-      --calibration-file F   Path to calibration file
-                             (default: ~/.local/share/gazectl/calibration.json)
-      --camera N             Camera index (default: 0)
-      --verbose              Print yaw angle continuously
-      -h, --help             Show this help
-    """)
-}
-
 func parseArgs() -> Config {
     var config = Config()
     var args = Array(CommandLine.arguments.dropFirst())
@@ -44,24 +28,24 @@ func parseArgs() -> Config {
             config.calibrate = true
         case "--calibration-file":
             guard !args.isEmpty else {
-                print("  [error] --calibration-file requires a path")
+                CLI.error("--calibration-file requires a path")
                 exit(1)
             }
             config.calibrationFile = args.removeFirst()
         case "--camera":
             guard !args.isEmpty, let idx = Int(args.removeFirst()) else {
-                print("  [error] --camera requires an integer")
+                CLI.error("--camera requires an integer")
                 exit(1)
             }
             config.cameraIndex = idx
         case "--verbose":
             config.verbose = true
         case "-h", "--help":
-            printUsage()
+            CLI.printUsage()
             exit(0)
         default:
-            print("  [error] Unknown argument: \(arg)")
-            printUsage()
+            CLI.error("Unknown argument: \(arg)")
+            CLI.printUsage()
             exit(1)
         }
     }
@@ -83,45 +67,55 @@ signal(SIGTERM, handleSignal)
 
 let config = parseArgs()
 
+CLI.printBanner()
+
 // 1. Check monitors
+let monitorSpinner = CLI.Spinner("Detecting monitors…")
+monitorSpinner.start()
 let monitors = AerospaceMonitor.listMonitors()
+
 if monitors.count < 2 {
-    print("  [error] Need at least 2 monitors. Found: \(monitors.count)")
+    monitorSpinner.fail(finalMessage: "Need at least 2 monitors (found \(monitors.count))")
     if monitors.isEmpty {
-        print("  Is aerospace installed and running?")
+        CLI.info("Is aerospace installed and running?")
     }
     exit(1)
 }
+monitorSpinner.stop(finalMessage: "Found \(monitors.count) monitors")
 
 // 2. Start face tracker
+let cameraSpinner = CLI.Spinner("Starting camera…")
+cameraSpinner.start()
+
 let faceTracker = FaceTracker()
 do {
     try faceTracker.start(cameraIndex: config.cameraIndex)
 } catch {
-    print("  [error] Cannot open camera \(config.cameraIndex): \(error)")
+    cameraSpinner.fail(finalMessage: "Cannot open camera \(config.cameraIndex): \(error)")
     exit(1)
 }
 
-// Wait briefly for camera to initialize and frames to start arriving
+// Wait for camera to initialize
 Thread.sleep(forTimeInterval: 1.0)
+cameraSpinner.update("Waiting for frames…")
 
 // Check if camera is actually delivering frames
 let initialFrames = faceTracker.frameCount
 Thread.sleep(forTimeInterval: 1.0)
 if faceTracker.frameCount == initialFrames {
-    print("  [error] No frames received from camera.")
-    print("  Check System Settings > Privacy & Security > Camera")
-    print("  and ensure this app has camera access.")
+    cameraSpinner.fail(finalMessage: "No frames received from camera")
+    CLI.info("Check System Settings → Privacy & Security → Camera")
     faceTracker.stop()
     exit(1)
 }
+cameraSpinner.stop(finalMessage: "Camera ready")
 
 // 3. Load or run calibration
 var calibration: [String: Double]?
 if !config.calibrate {
     calibration = Calibration.load(from: config.calibrationFile)
     if calibration != nil {
-        print("  Loaded calibration from \(config.calibrationFile)")
+        CLI.success("Loaded calibration")
     }
 }
 
@@ -132,21 +126,20 @@ if calibration == nil {
 
 let cal = calibration!
 
-// 4. Print startup info
+// 4. Print startup summary
 let sortedCal = cal.sorted { $0.value < $1.value }
 let boundaryValues = Calibration.boundaries(from: cal)
 
-print("\n  gazectl - Head Tracking Display Switcher")
-print("  ==========================================")
-print("  Monitors:")
-for (idStr, yaw) in sortedCal {
+let monitorSummary: [(name: String, yaw: Double)] = sortedCal.map { idStr, yaw in
     let name = monitors.first { String($0.id) == idStr }?.name ?? "?"
-    print("    \(name): calibrated at \(String(format: "%+.1f", yaw))°")
+    return (name: name, yaw: yaw)
 }
-print("  Boundaries: \(boundaryValues.map { String(format: "%+.1f°", $0) }.joined(separator: ", "))")
-print("  Verbose: \(config.verbose)")
-print("\n  Turn your head to switch display focus.")
-print("  Press Ctrl+C to quit.\n")
+
+CLI.printStartupSummary(
+    monitors: monitorSummary,
+    boundaries: boundaryValues,
+    verbose: config.verbose
+)
 
 // 5. Tracking loop
 var currentMonitor = AerospaceMonitor.currentMonitor()
@@ -157,17 +150,14 @@ while running {
 
         if config.verbose {
             let targetName = monitors.first { $0.id == target }?.name ?? "?"
-            print("  yaw: \(String(format: "%+6.1f", yaw))°  target=\(targetName)", terminator: "\r")
-            fflush(stdout)
+            CLI.printTrackingStatus(yaw: yaw, targetName: targetName)
         }
 
         if target != currentMonitor {
             let name = monitors.first { $0.id == target }?.name ?? "?"
             AerospaceMonitor.focusMonitor(target)
             currentMonitor = target
-            if config.verbose {
-                print("\n  >> Focused: \(name)")
-            }
+            CLI.printFocusSwitch(name)
         }
     }
     Thread.sleep(forTimeInterval: 0.033)
@@ -175,5 +165,5 @@ while running {
 
 // Cleanup
 faceTracker.stop()
-print("\n  Stopped.")
+CLI.printExit()
 exit(0)

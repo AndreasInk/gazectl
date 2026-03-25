@@ -37,11 +37,14 @@ enum MonitorManager {
         return nil
     }
 
+    /// Tracks which monitor we last clicked on to focus.
+    private static var lastClickedMonitor: Int?
+
     static func focusMonitor(_ id: Int) {
         let cursorAlreadyThere = currentMonitor() == id
-        let alreadyFocused = focusedMonitor() == id
+        let alreadyClicked = lastClickedMonitor == id
 
-        if alreadyFocused && cursorAlreadyThere { return }
+        if cursorAlreadyThere && alreadyClicked { return }
 
         let displayID = CGDirectDisplayID(id)
         let bounds = CGDisplayBounds(displayID)
@@ -51,7 +54,7 @@ enum MonitorManager {
             CGWarpMouseCursorPosition(center)
         }
 
-        if !alreadyFocused {
+        if !alreadyClicked {
             let clickPos = cursorAlreadyThere
                 ? CGEvent(source: nil)?.location ?? center
                 : center
@@ -59,14 +62,8 @@ enum MonitorManager {
             let mouseUp = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: clickPos, mouseButton: .left)
             mouseDown?.post(tap: .cghidEventTap)
             mouseUp?.post(tap: .cghidEventTap)
+            lastClickedMonitor = id
         }
-    }
-
-    /// The monitor that macOS currently considers focused (has the key window).
-    static func focusedMonitor() -> Int? {
-        guard let main = NSScreen.main else { return nil }
-        let screenNumber = main.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
-        return screenNumber.map { Int($0) }
     }
 
     private static func screenName(for displayID: CGDirectDisplayID) -> String? {

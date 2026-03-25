@@ -24,7 +24,7 @@
 ## Install
 
 ```bash
-npx gazectl
+npx gazectl@latest
 ```
 
 Or install globally:

@@ -73,7 +73,7 @@ enum Calibration {
 
     static func run(
         faceTracker: FaceTracker,
-        monitors: [AerospaceMonitor.Monitor]
+        monitors: [Monitor]
     ) -> [String: Double]? {
         CLI.printCalibrationHeader(monitorCount: monitors.count)
 

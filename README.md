@@ -17,9 +17,18 @@
 
 ---
 
-`gazectl` uses your webcam to detect which monitor you're looking at and automatically switches focus to it. It uses Apple's Vision framework for real-time face tracking and works with the [Aerospace](https://github.com/nikitabobko/AeroSpace) tiling window manager.
+`gazectl` uses your webcam to detect which monitor you're looking at and automatically switches focus to it. It uses Apple's Vision framework for real-time face tracking and native macOS APIs to switch monitor focus — no third-party window manager required.
 
-> macOS only. Requires macOS 14+ and [Aerospace](https://github.com/nikitabobko/AeroSpace).
+> macOS only. Requires macOS 14+.
+
+## Permissions
+
+gazectl needs two macOS permissions to work:
+
+- **Camera** — for head tracking via the webcam
+- **Accessibility** — for moving the cursor and clicking to switch monitor focus
+
+Grant both in **System Settings → Privacy & Security**. macOS will prompt you on first run.
 
 ## Install
 
@@ -61,7 +70,7 @@ On first run, gazectl asks you to look at each monitor and press Enter. It sampl
 
 1. **Calibrate** — look at each monitor, gazectl records the yaw angle
 2. **Track** — Apple Vision detects head yaw in real-time (~30fps)
-3. **Switch** — when yaw crosses the midpoint between calibrated angles, fires `aerospace focus-monitor`
+3. **Switch** — when yaw crosses the midpoint between calibrated angles, moves the cursor to the target monitor and clicks to focus
 
 ## Build from source
 

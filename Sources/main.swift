@@ -73,19 +73,10 @@ CLI.printBanner()
 let monitorSpinner = CLI.Spinner("Detecting monitors…")
 monitorSpinner.start()
 
-if !AerospaceMonitor.isInstalled() {
-    monitorSpinner.fail(finalMessage: "aerospace is not installed or not in PATH")
-    CLI.info("Install: https://github.com/nikitabobko/AeroSpace")
-    exit(1)
-}
-
-let monitors = AerospaceMonitor.listMonitors()
+let monitors = MonitorManager.listMonitors()
 
 if monitors.count < 2 {
     monitorSpinner.fail(finalMessage: "Need at least 2 monitors (found \(monitors.count))")
-    if monitors.isEmpty {
-        CLI.info("Is aerospace running? Try: aerospace list-monitors")
-    }
     exit(1)
 }
 monitorSpinner.stop(finalMessage: "Found \(monitors.count) monitors")
@@ -155,7 +146,7 @@ CLI.printStartupSummary(
 )
 
 // 5. Tracking loop
-var currentMonitor = AerospaceMonitor.currentMonitor()
+var currentMonitor = MonitorManager.currentMonitor()
 
 while running {
     if let yaw = faceTracker.latestYaw {
@@ -168,7 +159,7 @@ while running {
 
         if target != currentMonitor {
             let name = monitors.first { $0.id == target }?.name ?? "?"
-            AerospaceMonitor.focusMonitor(target)
+            MonitorManager.focusMonitor(target)
             currentMonitor = target
             CLI.printFocusSwitch(name)
         }

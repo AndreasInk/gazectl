@@ -10,7 +10,9 @@
     "bin/gazectl-bin"
   ],
   "scripts": {
-    "build": "swift build -c release"
+    "sync-version": "./scripts/sync-version.sh",
+    "version": "./scripts/sync-version.sh",
+    "build": "npm run sync-version && swift build -c release"
   },
   "keywords": [
     "head-tracking",

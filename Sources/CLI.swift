@@ -89,10 +89,8 @@ enum CLI {
 
     // MARK: - Version
 
-    static let version = "0.8.0"
-
     static func printVersion() {
-        print("gazectl \(version)")
+        print("gazectl \(BuildInfo.version)")
     }
 
     // MARK: - Styled help

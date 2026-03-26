@@ -21,6 +21,10 @@ if ! command -v gh &>/dev/null; then
   exit 1
 fi
 
+echo "==> Updating version to $VERSION..."
+npm version "$VERSION" --no-git-tag-version
+./scripts/sync-version.sh
+
 echo "==> Building universal binary..."
 swift build -c release --arch arm64
 swift build -c release --arch x86_64
@@ -33,12 +37,8 @@ chmod +x bin/gazectl-bin
 SIZE=$(ls -lh bin/gazectl-bin | awk '{print $5}')
 echo "    binary: bin/gazectl-bin ($SIZE)"
 
-echo "==> Updating version to $VERSION..."
-npm version "$VERSION" --no-git-tag-version
-sed -i '' "s/static let version = \".*\"/static let version = \"$VERSION\"/" Sources/CLI.swift
-
 echo "==> Committing and tagging..."
-git add package.json Sources/CLI.swift
+git add package.json Sources/BuildInfo.swift
 git commit -m "v$VERSION"
 git tag "v$VERSION"
 

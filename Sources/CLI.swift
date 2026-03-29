@@ -1,4 +1,5 @@
 import Foundation
+import GazectlCore
 
 // MARK: - ANSI Escape Codes
 
@@ -106,8 +107,9 @@ enum CLI {
 
           \(Style.cyan)--calibrate\(Style.reset)            Force recalibration
           \(Style.cyan)--calibration-file\(Style.reset) F   Path to calibration file
-          \(Style.cyan)--camera\(Style.reset) N             Camera index \(Style.dim)(default: 0)\(Style.reset)
-          \(Style.cyan)--verbose\(Style.reset)              Print yaw angle continuously
+          \(Style.cyan)--source\(Style.reset) S             Tracking source: camera | airpods
+          \(Style.cyan)--camera\(Style.reset) N             Camera index \(Style.dim)(only with --source camera)\(Style.reset)
+          \(Style.cyan)--verbose\(Style.reset)              Print live pose continuously
           \(Style.cyan)--debug\(Style.reset)                Log transition decision points
           \(Style.cyan)-v, --version\(Style.reset)          Print version
           \(Style.cyan)-h, --help\(Style.reset)             Show this help
@@ -184,20 +186,22 @@ enum CLI {
         return "\(Style.cyan)\(bar)\(Style.reset) \(Style.dim)\(pct)%\(Style.reset)"
     }
 
-    static func printSamplingProgress(yaw: Double, pitch: Double?, sampleCount: Int, totalSamples: Int) {
+    static func printSamplingProgress(
+        source: TrackingSource,
+        pose: HeadPose,
+        sampleCount: Int,
+        totalSamples: Int
+    ) {
         let bar = progressBar(current: sampleCount, total: totalSamples)
-        let yawStr = String(format: "%+.1f°", yaw)
-        let pitchStr = pitch.map { String(format: "%+.1f°", $0) } ?? "—"
-        print("\(Style.clearLine)\r  \(bar)  \(Style.dim)yaw:\(Style.reset) \(Style.cyan)\(yawStr)\(Style.reset)  \(Style.dim)pitch:\(Style.reset) \(Style.cyan)\(pitchStr)\(Style.reset)", terminator: "")
+        let poseSummary = formattedPose(pose, source: source)
+        print("\(Style.clearLine)\r  \(bar)  \(poseSummary)", terminator: "")
         fflush(stdout)
     }
 
     // MARK: - Tracking status line
 
-    static func printTrackingStatus(yaw: Double, pitch: Double, targetName: String) {
-        let yawStr = String(format: "%+6.1f°", yaw)
-        let pitchStr = String(format: "%+6.1f°", pitch)
-        print("\(Style.clearLine)\r  \(Style.dim)yaw\(Style.reset) \(Style.cyan)\(yawStr)\(Style.reset)  \(Style.dim)pitch\(Style.reset) \(Style.cyan)\(pitchStr)\(Style.reset)  \(Style.dim)→\(Style.reset)  \(Style.bold)\(targetName)\(Style.reset)", terminator: "")
+    static func printTrackingStatus(source: TrackingSource, pose: HeadPose, targetName: String) {
+        print("\(Style.clearLine)\r  \(formattedPose(pose, source: source))  \(Style.dim)→\(Style.reset)  \(Style.bold)\(targetName)\(Style.reset)", terminator: "")
         fflush(stdout)
     }
 
@@ -207,31 +211,27 @@ enum CLI {
 
     // MARK: - Calibration styled output
 
-    static func printCalibrationHeader(monitorCount: Int) {
+    static func printCalibrationHeader(monitorCount: Int, source: TrackingSource) {
         print()
         print("  \(Style.bold)\(Style.yellow)◆ Calibration\(Style.reset)")
-        print("  \(Style.dim)Found \(monitorCount) monitors\(Style.reset)")
+        print("  \(Style.dim)Source: \(source.displayName) • Found \(monitorCount) monitors\(Style.reset)")
         print()
     }
 
-    static func printCalibrationPrompt(_ monitorName: String, step: Int, total: Int) {
-        print("  \(Style.dim)[\(step)/\(total)]\(Style.reset) Look at \(Style.bold)\(monitorName)\(Style.reset), press \(Style.cyan)Enter\(Style.reset), and keep looking for \(Style.bold)2s\(Style.reset)")
+    static func printCalibrationPrompt(_ prompt: String, step: Int, total: Int) {
+        print("  \(Style.dim)[\(step)/\(total)]\(Style.reset) \(prompt)")
     }
 
-    static func printCalibrationResult(_ monitorName: String, gaze: GazePoint) {
-        let yawStr = String(format: "%+.1f°", gaze.yaw)
-        let pitchStr = String(format: "%+.1f°", gaze.pitch)
-        print("  \(Style.green)✓\(Style.reset) \(Style.bold)\(monitorName)\(Style.reset)  \(Style.dim)yaw\(Style.reset) \(Style.cyan)\(yawStr)\(Style.reset)  \(Style.dim)pitch\(Style.reset) \(Style.cyan)\(pitchStr)\(Style.reset)")
+    static func printCalibrationResult(_ monitorName: String, pose: HeadPose, source: TrackingSource) {
+        print("  \(Style.green)✓\(Style.reset) \(Style.bold)\(monitorName)\(Style.reset)  \(formattedPose(pose, source: source))")
     }
 
-    static func printCalibrationSummary(_ entries: [(name: String, gaze: GazePoint)]) {
+    static func printCalibrationSummary(entries: [(name: String, pose: HeadPose)], source: TrackingSource) {
         print()
         print("  \(Style.bold)\(Style.green)✓ Calibration complete\(Style.reset)")
         print()
         for entry in entries {
-            let yawStr = String(format: "%+.1f°", entry.gaze.yaw)
-            let pitchStr = String(format: "%+.1f°", entry.gaze.pitch)
-            print("    \(Style.bold)\(entry.name)\(Style.reset)  \(Style.dim)yaw\(Style.reset) \(Style.cyan)\(yawStr)\(Style.reset)  \(Style.dim)pitch\(Style.reset) \(Style.cyan)\(pitchStr)\(Style.reset)")
+            print("    \(Style.bold)\(entry.name)\(Style.reset)  \(formattedPose(entry.pose, source: source))")
         }
         print()
     }
@@ -239,26 +239,32 @@ enum CLI {
     // MARK: - Startup summary
 
     static func printStartupSummary(
-        monitors: [(name: String, gaze: GazePoint)],
+        source: TrackingSource,
+        monitors: [(name: String, pose: HeadPose)],
         boundaries: [Double],
-        verbose: Bool
+        verbose: Bool,
+        anchorName: String?
     ) {
         print()
         print("  \(Style.bold)Monitors\(Style.reset)")
         for m in monitors {
-            let yawStr = String(format: "%+.1f°", m.gaze.yaw)
-            let pitchStr = String(format: "%+.1f°", m.gaze.pitch)
-            print("    \(Style.cyan)●\(Style.reset) \(Style.bold)\(m.name)\(Style.reset)  \(Style.dim)yaw \(yawStr)  pitch \(pitchStr)\(Style.reset)")
+            print("    \(Style.cyan)●\(Style.reset) \(Style.bold)\(m.name)\(Style.reset)  \(formattedPose(m.pose, source: source))")
         }
         print()
-        let bStr = boundaries.map { String(format: "%+.1f°", $0) }.joined(separator: "  ")
-        print("  \(Style.dim)boundaries  \(bStr)\(Style.reset)")
+        if source == .camera {
+            let bStr = boundaries.map { String(format: "%+.1f°", $0) }.joined(separator: "  ")
+            print("  \(Style.dim)boundaries  \(bStr)\(Style.reset)")
+        } else if let anchorName {
+            print("  \(Style.dim)anchor      \(anchorName)\(Style.reset)")
+        }
         if verbose {
             print("  \(Style.dim)verbose     on\(Style.reset)")
         }
         print()
         print("  \(Style.dim)Turn your head to switch focus.\(Style.reset)")
-        print("  \(Style.dim)Double-blink to pause/resume tracking.\(Style.reset)")
+        if source.supportsToggleGesture {
+            print("  \(Style.dim)Double-blink to pause/resume tracking.\(Style.reset)")
+        }
         print("  \(Style.dim)Press \(Style.reset)Ctrl+C\(Style.dim) to quit.\(Style.reset)")
         print()
     }
@@ -280,5 +286,20 @@ enum CLI {
         print("  \(Style.dim)Stopped.\(Style.reset)")
         print(Style.showCursor, terminator: "")
         fflush(stdout)
+    }
+
+    private static func formattedPose(_ pose: HeadPose, source: TrackingSource) -> String {
+        let yawStr = String(format: "%+6.1f°", pose.yaw)
+        let pitchStr = String(format: "%+6.1f°", pose.pitch)
+        let yaw = "\(Style.dim)yaw\(Style.reset) \(Style.cyan)\(yawStr)\(Style.reset)"
+        let pitch = "\(Style.dim)pitch\(Style.reset) \(Style.cyan)\(pitchStr)\(Style.reset)"
+
+        if source == .camera {
+            return "\(yaw)  \(pitch)"
+        }
+
+        let rollStr = String(format: "%+6.1f°", pose.roll)
+        let roll = "\(Style.dim)roll\(Style.reset) \(Style.cyan)\(rollStr)\(Style.reset)"
+        return "\(yaw)  \(pitch)  \(roll)"
     }
 }

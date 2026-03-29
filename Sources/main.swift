@@ -1,63 +1,6 @@
 import Foundation
 import CoreGraphics
-
-// MARK: - CLI argument parsing
-
-struct Config {
-    var calibrate = false
-    var calibrationFile: String
-    var cameraIndex = 0
-    var verbose = false
-    var debug = false
-
-    static let defaultCalibrationPath: String = {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        return "\(home)/.local/share/gazectl/calibration.json"
-    }()
-
-    init() {
-        calibrationFile = Self.defaultCalibrationPath
-    }
-}
-
-func parseArgs() -> Config {
-    var config = Config()
-    var args = Array(CommandLine.arguments.dropFirst())
-    while !args.isEmpty {
-        let arg = args.removeFirst()
-        switch arg {
-        case "--calibrate":
-            config.calibrate = true
-        case "--calibration-file":
-            guard !args.isEmpty else {
-                CLI.error("--calibration-file requires a path")
-                exit(1)
-            }
-            config.calibrationFile = args.removeFirst()
-        case "--camera":
-            guard !args.isEmpty, let idx = Int(args.removeFirst()) else {
-                CLI.error("--camera requires an integer")
-                exit(1)
-            }
-            config.cameraIndex = idx
-        case "--verbose":
-            config.verbose = true
-        case "--debug":
-            config.debug = true
-        case "-v", "--version":
-            CLI.printVersion()
-            exit(0)
-        case "-h", "--help":
-            CLI.printUsage()
-            exit(0)
-        default:
-            CLI.error("Unknown argument: \(arg)")
-            CLI.printUsage()
-            exit(1)
-        }
-    }
-    return config
-}
+import GazectlCore
 
 // MARK: - Signal handling
 
@@ -72,163 +15,200 @@ signal(SIGTERM, handleSignal)
 
 // MARK: - Main
 
-let config = parseArgs()
-
-CLI.printBanner()
-
-// 1. Check monitors
-let monitorSpinner = CLI.Spinner("Detecting monitors…")
-monitorSpinner.start()
-
-let monitors = MonitorManager.listMonitors()
-
-if monitors.count < 2 {
-    monitorSpinner.fail(finalMessage: "Need at least 2 monitors (found \(monitors.count))")
-    exit(1)
-}
-monitorSpinner.stop(finalMessage: "Found \(monitors.count) monitors")
-
-// 2. Start face tracker
-let cameraSpinner = CLI.Spinner("Starting camera…")
-cameraSpinner.start()
-
-let faceTracker = FaceTracker()
-do {
-    try faceTracker.start(cameraIndex: config.cameraIndex)
-} catch {
-    cameraSpinner.fail(finalMessage: "Cannot open camera \(config.cameraIndex): \(error)")
-    exit(1)
-}
-
-// Wait for camera to initialize
-Thread.sleep(forTimeInterval: 1.0)
-cameraSpinner.update("Waiting for frames…")
-
-// Check if camera is actually delivering frames
-let initialFrames = faceTracker.frameCount
-Thread.sleep(forTimeInterval: 1.0)
-if faceTracker.frameCount == initialFrames {
-    cameraSpinner.fail(finalMessage: "No frames received from camera")
-    CLI.info("Check System Settings → Privacy & Security → Camera")
-    faceTracker.stop()
-    exit(1)
-}
-cameraSpinner.stop(finalMessage: "Camera ready")
-
-// 3. Load or run calibration
-var calibration: [String: GazePoint]?
-if !config.calibrate {
-    calibration = Calibration.load(from: config.calibrationFile)
-    if calibration != nil {
-        CLI.success("Loaded calibration")
+func tracker(for source: TrackingSource) -> HeadTrackingProvider {
+    switch source {
+    case .camera:
+        return FaceTracker()
+    case .airpods:
+        return AirPodsTracker()
     }
 }
 
-if calibration == nil {
-    calibration = Calibration.run(faceTracker: faceTracker, monitors: monitors)
-    guard let cal = calibration else {
-        // User cancelled (Ctrl+C / EOF)
-        faceTracker.stop()
+func waitForSamples(from tracker: HeadTrackingProvider, timeout: TimeInterval) -> Bool {
+    let initialSamples = tracker.sampleCount
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+        if tracker.sampleCount > initialSamples {
+            return true
+        }
+        Thread.sleep(forTimeInterval: 0.1)
+    }
+    return false
+}
+
+func run(config: Config) -> Int32 {
+    CLI.printBanner()
+
+    let monitorSpinner = CLI.Spinner("Detecting monitors…")
+    monitorSpinner.start()
+
+    let monitors = MonitorManager.listMonitors()
+    guard monitors.count >= 2 else {
+        monitorSpinner.fail(finalMessage: "Need at least 2 monitors (found \(monitors.count))")
+        return 1
+    }
+    monitorSpinner.stop(finalMessage: "Found \(monitors.count) monitors")
+
+    let tracker = tracker(for: config.source)
+    let startupSpinner = CLI.Spinner("Starting \(config.source.displayName.lowercased()) tracking…")
+    startupSpinner.start()
+
+    do {
+        try tracker.start(config: config)
+    } catch {
+        startupSpinner.fail(finalMessage: String(describing: error))
+        return 1
+    }
+
+    let ready = waitForSamples(
+        from: tracker,
+        timeout: config.source == .camera ? 2.0 : 3.0
+    )
+    guard ready else {
+        startupSpinner.fail(finalMessage: tracker.startupIssue ?? "Tracking failed to start")
+        if config.source == .camera {
+            CLI.info("Check System Settings -> Privacy & Security -> Camera")
+        }
+        tracker.stop()
+        return 1
+    }
+    startupSpinner.stop(finalMessage: "\(config.source.displayName) ready")
+
+    var store = Calibration.loadStore(from: config.calibrationFile)
+    guard let activeCalibration = Calibration.resolveActiveCalibration(
+        config: config,
+        tracker: tracker,
+        monitors: monitors,
+        store: &store
+    ) else {
+        tracker.stop()
         CLI.printExit()
-        exit(0)
-    }
-    Calibration.save(cal, to: config.calibrationFile)
-}
-
-let cal = calibration!
-
-// 4. Print startup summary
-let sortedCal = cal.sorted { $0.value.yaw < $1.value.yaw }
-let boundaryValues = Calibration.boundaries(from: cal)
-
-let monitorSummary: [(name: String, gaze: GazePoint)] = sortedCal.map { idStr, gaze in
-    let name = monitors.first { String($0.id) == idStr }?.name ?? "?"
-    return (name: name, gaze: gaze)
-}
-
-CLI.printStartupSummary(
-    monitors: monitorSummary,
-    boundaries: boundaryValues,
-    verbose: config.verbose
-)
-
-// 5. Tracking loop
-var gazeMonitor = MonitorManager.focusedMonitor() ?? MonitorManager.currentMonitor()
-var lastAppliedGazeMonitor = gazeMonitor
-let switchCooldown: TimeInterval = 0.5   // minimum seconds between switches
-var lastSwitchTime = Date.distantPast
-var trackingEnabled = true
-
-while running {
-    // Check for double-blink toggle
-    if faceTracker.consumeDoubleBlink() {
-        trackingEnabled.toggle()
-        CLI.printTrackingToggled(enabled: trackingEnabled)
-        if trackingEnabled {
-            // Re-sync gaze monitor to prevent an immediate stale switch
-            gazeMonitor = MonitorManager.focusedMonitor() ?? MonitorManager.currentMonitor()
-            lastAppliedGazeMonitor = gazeMonitor
-        }
+        return 0
     }
 
-    if trackingEnabled, let yaw = faceTracker.latestYaw {
-        let pitch = faceTracker.latestPitch ?? 0.0
-        let cursorMonitor = MonitorManager.currentMonitor()
+    let sortedCalibration = activeCalibration.poses.sorted { $0.value.yaw < $1.value.yaw }
+    let monitorSummary: [(name: String, pose: HeadPose)] = sortedCalibration.map { monitorID, pose in
+        let name = monitors.first(where: { String($0.id) == monitorID })?.name ?? "?"
+        return (name: name, pose: pose)
+    }
 
-        let target = Calibration.targetMonitor(
-            yaw: yaw, pitch: pitch,
-            calibration: cal,
-            currentMonitor: gazeMonitor ?? 0
-        )
-        gazeMonitor = target
+    let boundaries = config.source == .camera
+        ? MonitorTargeting.cameraYawBoundaries(from: activeCalibration.poses)
+        : []
+    let anchorName = activeCalibration.anchorMonitorID.flatMap { anchorID in
+        monitors.first(where: { String($0.id) == anchorID })?.name
+    }
 
-        if config.verbose {
-            let targetName = monitors.first { $0.id == target }?.name ?? "?"
-            CLI.printTrackingStatus(yaw: yaw, pitch: pitch, targetName: targetName)
+    CLI.printStartupSummary(
+        source: config.source,
+        monitors: monitorSummary,
+        boundaries: boundaries,
+        verbose: config.verbose,
+        anchorName: anchorName
+    )
+
+    var gazeMonitor = MonitorManager.focusedMonitor() ?? MonitorManager.currentMonitor()
+    var lastAppliedMonitor = gazeMonitor
+    let switchCooldown: TimeInterval = config.source == .airpods ? 0.2 : 0.5
+    let trackingPollInterval: TimeInterval = config.source == .airpods ? 0.016 : 0.033
+    var lastSwitchTime = Date.distantPast
+    var trackingEnabled = true
+    var exitCode: Int32 = 0
+
+    while running {
+        if let disconnectMessage = tracker.disconnectMessage {
+            CLI.error(disconnectMessage)
+            exitCode = 1
+            break
         }
 
-        if gazeMonitor != lastAppliedGazeMonitor {
-            let transition = MonitorManager.transition(
-                to: target,
-                cursorMonitor: cursorMonitor
+        if config.source.supportsToggleGesture, tracker.consumeToggleGesture() {
+            trackingEnabled.toggle()
+            CLI.printTrackingToggled(enabled: trackingEnabled)
+            if trackingEnabled {
+                gazeMonitor = MonitorManager.focusedMonitor() ?? MonitorManager.currentMonitor()
+                lastAppliedMonitor = gazeMonitor
+            }
+        }
+
+        if trackingEnabled, let pose = tracker.latestPose {
+            let cursorMonitor = MonitorManager.currentMonitor()
+            let target = MonitorTargeting.targetMonitor(
+                for: pose,
+                source: config.source,
+                calibration: activeCalibration.poses,
+                currentMonitor: gazeMonitor ?? 0
             )
+            gazeMonitor = target
 
-            if config.debug {
-                let targetName = monitors.first { $0.id == target }?.name ?? "?"
-                let cursorName = cursorMonitor.flatMap { cm in monitors.first { $0.id == cm }?.name } ?? "nil"
-                let axMonitor = MonitorManager.focusedMonitor()
-                let axName = axMonitor.flatMap { am in monitors.first { $0.id == am }?.name } ?? "nil"
-                CLI.debug("""
-                [TRANSITION] gaze→\(targetName) | \
-                cursor=\(cursorName) (id:\(cursorMonitor.map(String.init) ?? "nil")) \
-                ax=\(axName) (id:\(axMonitor.map(String.init) ?? "nil")) \
-                → \(transition)
-                """)
+            if config.verbose {
+                let targetName = monitors.first(where: { $0.id == target })?.name ?? "?"
+                CLI.printTrackingStatus(source: config.source, pose: pose, targetName: targetName)
             }
 
-            if transition.requiresAction {
-                let now = Date()
-                if now.timeIntervalSince(lastSwitchTime) >= switchCooldown {
-                    let name = monitors.first { $0.id == target }?.name ?? "?"
-                    MonitorManager.focusMonitor(target, transition: transition, debug: config.debug)
-                    lastAppliedGazeMonitor = target
-                    lastSwitchTime = now
-                    CLI.printFocusSwitch(name)
-                } else if config.debug {
-                    CLI.debug("[COOLDOWN] \(String(format: "%.2f", Date().timeIntervalSince(lastSwitchTime)))s < \(switchCooldown)s — skipped")
-                }
-            } else {
+            if gazeMonitor != lastAppliedMonitor {
+                let transition = MonitorManager.transition(to: target, cursorMonitor: cursorMonitor)
+
                 if config.debug {
-                    CLI.debug("[NO-ACTION] transition=\(transition), updating lastApplied without action")
+                    let targetName = monitors.first(where: { $0.id == target })?.name ?? "?"
+                    let cursorName = cursorMonitor.flatMap { current in monitors.first(where: { $0.id == current })?.name } ?? "nil"
+                    let axMonitor = MonitorManager.focusedMonitor()
+                    let axName = axMonitor.flatMap { current in monitors.first(where: { $0.id == current })?.name } ?? "nil"
+                    CLI.debug("""
+                    [TRANSITION] source=\(config.source.rawValue) target=\(targetName) pose=(yaw:\(String(format: "%.1f", pose.yaw)) pitch:\(String(format: "%.1f", pose.pitch)) roll:\(String(format: "%.1f", pose.roll))) \
+                    cursor=\(cursorName) (id:\(cursorMonitor.map(String.init) ?? "nil")) \
+                    ax=\(axName) (id:\(axMonitor.map(String.init) ?? "nil")) \
+                    → \(transition)
+                    """)
                 }
-                lastAppliedGazeMonitor = target
+
+                if transition.requiresAction {
+                    let now = Date()
+                    if now.timeIntervalSince(lastSwitchTime) >= switchCooldown {
+                        let name = monitors.first(where: { $0.id == target })?.name ?? "?"
+                        MonitorManager.focusMonitor(target, transition: transition, debug: config.debug)
+                        lastAppliedMonitor = target
+                        lastSwitchTime = now
+                        CLI.printFocusSwitch(name)
+                    } else if config.debug {
+                        CLI.debug("[COOLDOWN] \(String(format: "%.2f", Date().timeIntervalSince(lastSwitchTime)))s < \(switchCooldown)s — skipped")
+                    }
+                } else {
+                    if config.debug {
+                        CLI.debug("[NO-ACTION] transition=\(transition), updating lastApplied without action")
+                    }
+                    lastAppliedMonitor = target
+                }
             }
         }
+
+        Thread.sleep(forTimeInterval: trackingPollInterval)
     }
-    Thread.sleep(forTimeInterval: 0.033)
+
+    tracker.stop()
+    CLI.printExit()
+    return exitCode
 }
 
-// Cleanup
-faceTracker.stop()
-CLI.printExit()
-exit(0)
+let parsedCommand: ParsedCommand
+do {
+    parsedCommand = try ConfigParser.parse(arguments: CommandLine.arguments)
+} catch let error as ConfigParseError {
+    CLI.error(error.description)
+    CLI.printUsage()
+    exit(1)
+} catch {
+    CLI.error(error.localizedDescription)
+    exit(1)
+}
+
+switch parsedCommand {
+case .help:
+    CLI.printUsage()
+    exit(0)
+case .version:
+    CLI.printVersion()
+    exit(0)
+case .run(let config):
+    exit(run(config: config))
+}

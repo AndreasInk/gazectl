@@ -1,4 +1,5 @@
 import CoreVideo
+import GazectlCore
 import Vision
 
 final class FaceTracker {
@@ -57,6 +58,15 @@ final class FaceTracker {
         lock.lock()
         defer { lock.unlock() }
         return _latestEAR
+    }
+
+    var latestPose: HeadPose? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let yaw = _smoothedYaw else {
+            return nil
+        }
+        return HeadPose(yaw: yaw, pitch: _smoothedPitch ?? 0, roll: 0)
     }
 
     /// Returns true (once) if a double-blink was detected since the last call.
@@ -206,5 +216,23 @@ final class FaceTracker {
         let height = maxY - minY
         guard width > 0.001 else { return 1.0 }
         return height / width
+    }
+}
+
+extension FaceTracker: HeadTrackingProvider {
+    var source: TrackingSource { .camera }
+
+    var sampleCount: Int { frameCount }
+
+    var startupIssue: String? { "No frames received from camera" }
+
+    var disconnectMessage: String? { nil }
+
+    func start(config: Config) throws {
+        try start(cameraIndex: config.cameraIndex)
+    }
+
+    func consumeToggleGesture() -> Bool {
+        consumeDoubleBlink()
     }
 }

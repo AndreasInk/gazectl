@@ -17,18 +17,19 @@
 
 ---
 
-`gazectl` uses your webcam to detect which monitor you're looking at and automatically switches focus to it. It uses Apple's Vision framework for real-time face tracking and native macOS APIs to switch monitor focus — no third-party window manager required.
+`gazectl` can track your head with either your webcam or supported AirPods motion sensors to detect which monitor you're looking at and automatically switch focus to it. It uses Apple's Vision and Core Motion frameworks plus native macOS APIs to switch monitor focus, with no third-party window manager required.
 
 > macOS only. Requires macOS 14+.
 
 ## Permissions
 
-gazectl needs two macOS permissions to work:
+gazectl needs these macOS permissions depending on the source you use:
 
-- **Camera** — for head tracking via the webcam
 - **Accessibility** — for moving the cursor and clicking to switch monitor focus
+- **Camera** — required for `--source camera`
+- **Motion & Fitness** — required for `--source airpods`
 
-Grant both in **System Settings → Privacy & Security**. macOS will prompt you on first run.
+Grant the needed permissions in **System Settings → Privacy & Security**. macOS prompts the first time a source is used.
 
 ## Install
 
@@ -48,6 +49,9 @@ npm i -g gazectl
 # First run — calibrates automatically
 gazectl
 
+# Use AirPods motion instead of the camera
+gazectl --source airpods
+
 # Force recalibration
 gazectl --calibrate
 
@@ -55,7 +59,9 @@ gazectl --calibrate
 gazectl --verbose
 ```
 
-On first run, gazectl asks you to look at each monitor and press Enter. It samples your head angle for 2 seconds per monitor, then saves calibration to `~/.local/share/gazectl/calibration.json`.
+On first run, gazectl asks you to look at each monitor and press Enter. It samples your head pose for 2 seconds per monitor, then saves calibration to `~/.local/share/gazectl/calibration.json`.
+
+AirPods mode uses a session-relative baseline. After the initial per-monitor calibration, later launches ask for one short anchor baseline on the saved anchor monitor before live tracking begins. See [docs/airpods-motion.md](docs/airpods-motion.md) for the model.
 
 ## Options
 
@@ -63,14 +69,16 @@ On first run, gazectl asks you to look at each monitor and press Enter. It sampl
 |------|---------|-------------|
 | `--calibrate` | off | Force recalibration |
 | `--calibration-file` | `~/.local/share/gazectl/calibration.json` | Custom calibration path |
-| `--camera` | 0 | Camera index |
-| `--verbose` | off | Print yaw angle continuously |
+| `--source` | `camera` | Tracking source: `camera` or `airpods` |
+| `--camera` | 0 | Camera index, only valid with `--source camera` |
+| `--verbose` | off | Print live pose continuously |
+| `--debug` | off | Print transition decision points |
 
 ## How it works
 
-1. **Calibrate** — look at each monitor, gazectl records the yaw angle
-2. **Track** — Apple Vision detects head yaw in real-time (~30fps)
-3. **Switch** — when yaw crosses the midpoint between calibrated angles, moves the cursor to the target monitor and clicks to focus
+1. **Calibrate** — record a per-monitor pose map for the selected source
+2. **Track** — Apple Vision or AirPods motion reports your live head pose in real time
+3. **Switch** — gazectl matches the live pose against the calibrated monitor poses and clicks into the best match
 
 ## Build from source
 

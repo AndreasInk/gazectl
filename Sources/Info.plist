@@ -8,5 +8,7 @@
     <string>gazectl</string>
     <key>NSCameraUsageDescription</key>
     <string>gazectl uses the camera to track head direction for monitor switching</string>
+    <key>NSMotionUsageDescription</key>
+    <string>gazectl uses motion data from supported AirPods to track head direction for monitor switching</string>
 </dict>
 </plist>

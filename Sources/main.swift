@@ -109,9 +109,11 @@ func run(config: Config) -> Int32 {
 
     var gazeMonitor = MonitorManager.focusedMonitor() ?? MonitorManager.currentMonitor()
     var lastAppliedMonitor = gazeMonitor
-    let switchCooldown: TimeInterval = config.source == .airpods ? 0.2 : 0.5
-    let trackingPollInterval: TimeInterval = config.source == .airpods ? 0.016 : 0.033
     var lastSwitchTime = Date.distantPast
+    let airPodsProfile = config.source == .airpods ? AirPodsStabilityProfile() : nil
+    let trackingPollInterval = airPodsProfile?.trackingPollInterval ?? 0.033
+    var airPodsState = AirPodsStabilityState()
+    var lastAirPodsDebugLogTime = Date.distantPast
     var trackingEnabled = true
     var exitCode: Int32 = 0
 
@@ -133,29 +135,57 @@ func run(config: Config) -> Int32 {
 
         if trackingEnabled, let pose = tracker.latestPose {
             let cursorMonitor = MonitorManager.currentMonitor()
-            let target = MonitorTargeting.targetMonitor(
+            let decision = MonitorTargeting.targetDecision(
                 for: pose,
                 source: config.source,
                 calibration: activeCalibration.poses,
                 currentMonitor: gazeMonitor ?? 0
             )
-            gazeMonitor = target
+            let rawTarget = decision.bestMonitor
+            let now = Date()
+            var airPodsFilterStep: AirPodsStabilityStep?
+
+            if let airPodsProfile {
+                let filterStep = AirPodsStabilityFilter.step(
+                    currentMonitor: lastAppliedMonitor ?? rawTarget,
+                    decision: decision,
+                    state: airPodsState,
+                    now: now.timeIntervalSinceReferenceDate,
+                    profile: airPodsProfile
+                )
+                airPodsFilterStep = filterStep
+                airPodsState = filterStep.state
+                gazeMonitor = filterStep.committedMonitor
+            } else {
+                gazeMonitor = rawTarget
+            }
 
             if config.verbose {
-                let targetName = monitors.first(where: { $0.id == target })?.name ?? "?"
+                let targetName = monitors.first(where: { $0.id == rawTarget })?.name ?? "?"
                 CLI.printTrackingStatus(source: config.source, pose: pose, targetName: targetName)
             }
 
             if gazeMonitor != lastAppliedMonitor {
+                let target = gazeMonitor ?? rawTarget
                 let transition = MonitorManager.transition(to: target, cursorMonitor: cursorMonitor)
 
                 if config.debug {
                     let targetName = monitors.first(where: { $0.id == target })?.name ?? "?"
+                    let rawTargetName = monitors.first(where: { $0.id == rawTarget })?.name ?? "?"
                     let cursorName = cursorMonitor.flatMap { current in monitors.first(where: { $0.id == current })?.name } ?? "nil"
                     let axMonitor = MonitorManager.focusedMonitor()
                     let axName = axMonitor.flatMap { current in monitors.first(where: { $0.id == current })?.name } ?? "nil"
+                    let candidateName = airPodsState.candidateMonitor.flatMap { candidate in
+                        monitors.first(where: { $0.id == candidate })?.name
+                    } ?? "nil"
+                    let dwellProgress: String
+                    if let airPodsProfile, let candidateSince = airPodsState.candidateSince {
+                        dwellProgress = String(format: "%.2f/%.2fs", now.timeIntervalSinceReferenceDate - candidateSince, airPodsProfile.candidateDwell)
+                    } else {
+                        dwellProgress = "n/a"
+                    }
                     CLI.debug("""
-                    [TRANSITION] source=\(config.source.rawValue) target=\(targetName) pose=(yaw:\(String(format: "%.1f", pose.yaw)) pitch:\(String(format: "%.1f", pose.pitch)) roll:\(String(format: "%.1f", pose.roll))) \
+                    [TRANSITION] source=\(config.source.rawValue) raw=\(rawTargetName) committed=\(targetName) pose=(yaw:\(String(format: "%.1f", pose.yaw)) pitch:\(String(format: "%.1f", pose.pitch)) roll:\(String(format: "%.1f", pose.roll))) margin=\(String(format: "%.2f", decision.improvementMargin)) candidate=\(candidateName) dwell=\(dwellProgress) \
                     cursor=\(cursorName) (id:\(cursorMonitor.map(String.init) ?? "nil")) \
                     ax=\(axName) (id:\(axMonitor.map(String.init) ?? "nil")) \
                     → \(transition)
@@ -163,21 +193,71 @@ func run(config: Config) -> Int32 {
                 }
 
                 if transition.requiresAction {
-                    let now = Date()
-                    if now.timeIntervalSince(lastSwitchTime) >= switchCooldown {
+                    let switchCooldown = airPodsProfile?.switchCooldown ?? 0.5
+                    let elapsedSinceLastCommit: TimeInterval
+                    if airPodsProfile == nil {
+                        elapsedSinceLastCommit = now.timeIntervalSince(lastSwitchTime)
+                    } else {
+                        let lastCommitTime = airPodsState.lastCommittedSwitchTime ?? -.infinity
+                        elapsedSinceLastCommit = now.timeIntervalSinceReferenceDate - lastCommitTime
+                    }
+                    if elapsedSinceLastCommit >= switchCooldown {
                         let name = monitors.first(where: { $0.id == target })?.name ?? "?"
                         MonitorManager.focusMonitor(target, transition: transition, debug: config.debug)
                         lastAppliedMonitor = target
-                        lastSwitchTime = now
+                        if airPodsProfile == nil {
+                            lastSwitchTime = now
+                        } else {
+                            airPodsState.lastCommittedSwitchTime = now.timeIntervalSinceReferenceDate
+                            airPodsState.candidateMonitor = nil
+                            airPodsState.candidateSince = nil
+                        }
                         CLI.printFocusSwitch(name)
                     } else if config.debug {
-                        CLI.debug("[COOLDOWN] \(String(format: "%.2f", Date().timeIntervalSince(lastSwitchTime)))s < \(switchCooldown)s — skipped")
+                        CLI.debug("[COOLDOWN] \(String(format: "%.2f", elapsedSinceLastCommit))s < \(switchCooldown)s — skipped")
                     }
                 } else {
                     if config.debug {
                         CLI.debug("[NO-ACTION] transition=\(transition), updating lastApplied without action")
                     }
                     lastAppliedMonitor = target
+                    if airPodsProfile != nil {
+                        airPodsState.candidateMonitor = nil
+                        airPodsState.candidateSince = nil
+                    }
+                }
+            } else if config.source == .airpods, config.debug {
+                let rawTargetName = monitors.first(where: { $0.id == rawTarget })?.name ?? "?"
+                let committedName = lastAppliedMonitor.flatMap { monitorID in
+                    monitors.first(where: { $0.id == monitorID })?.name
+                } ?? "nil"
+                let candidateName = airPodsState.candidateMonitor.flatMap { candidate in
+                    monitors.first(where: { $0.id == candidate })?.name
+                } ?? "nil"
+                let dwellProgress: String
+                if let airPodsProfile, let candidateSince = airPodsState.candidateSince {
+                    dwellProgress = String(format: "%.2f/%.2fs", now.timeIntervalSinceReferenceDate - candidateSince, airPodsProfile.candidateDwell)
+                } else {
+                    dwellProgress = "n/a"
+                }
+                let gateReason = airPodsFilterStep?.reason.rawValue ?? "n/a"
+                CLI.debug(
+                    "[AIRPODS] raw=\(rawTargetName) committed=\(committedName) best=\(String(format: "%.2f", decision.bestDistance)) current=\(String(format: "%.2f", decision.currentMonitorDistance)) margin=\(String(format: "%.2f", decision.improvementMargin)) gate=\(gateReason) candidate=\(candidateName) dwell=\(dwellProgress)"
+                )
+
+                if now.timeIntervalSince(lastAirPodsDebugLogTime) >= 0.25 {
+                    lastAirPodsDebugLogTime = now
+                    let scores = MonitorTargeting.debugScores(
+                        for: pose,
+                        source: config.source,
+                        calibration: activeCalibration.poses,
+                        currentMonitor: lastAppliedMonitor ?? rawTarget
+                    )
+                    let scoreSummary = scores.prefix(4).map { score in
+                        let name = monitors.first(where: { $0.id == score.monitorID })?.name ?? String(score.monitorID)
+                        return "\(name){raw:\(String(format: "%.2f", score.rawDistance)) eff:\(String(format: "%.2f", score.effectiveDistance)) dy:\(String(format: "%.2f", score.normalizedYawDelta)) dp:\(String(format: "%.2f", score.normalizedPitchDelta)) dr:\(String(format: "%.2f", score.normalizedRollDelta))\(score.isCurrentMonitor ? " current" : "")}"
+                    }.joined(separator: " | ")
+                    CLI.debug("[AIRPODS-SCORES] \(scoreSummary)")
                 }
             }
         }

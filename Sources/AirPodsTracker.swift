@@ -14,7 +14,7 @@ final class AirPodsTracker: NSObject, HeadTrackingProvider {
     private var _latestPose: HeadPose?
     private var _sampleCount = 0
     private var _disconnectMessage: String?
-    private let smoothing = 0.45
+    private let smoothing = 0.32
 
     var source: TrackingSource { .airpods }
 

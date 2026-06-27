@@ -230,9 +230,20 @@ struct AirPodsStabilityFilterTests {
             now: 1.30,
             profile: profile
         )
+        let cooldown = AirPodsStabilityFilter.step(
+            currentMonitor: 2,
+            decision: bounceBack,
+            state: rebound.state,
+            now: 1.485,
+            profile: profile
+        )
 
         #expect(committed.committedMonitor == 2)
+        #expect(committed.state.lastCommittedSwitchTime == 1.19)
         #expect(rebound.committedMonitor == 2)
         #expect(rebound.isSwitchCommitted == false)
+        #expect(cooldown.committedMonitor == 2)
+        #expect(cooldown.isSwitchCommitted == false)
+        #expect(cooldown.reason == .cooldown)
     }
 }

@@ -128,6 +128,7 @@ public enum AirPodsStabilityFilter {
 
         nextState.candidateMonitor = nil
         nextState.candidateSince = nil
+        nextState.lastCommittedSwitchTime = now
         return AirPodsStabilityStep(
             committedMonitor: decision.bestMonitor,
             state: nextState,

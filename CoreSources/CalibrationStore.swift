@@ -112,4 +112,17 @@ public enum AirPodsCalibrationMath {
     ) -> [String: HeadPose] {
         profile.relativeMonitors.mapValues { $0.adding(sessionAnchorPose) }
     }
+
+    public static func activateProfile(
+        _ profile: AirPodsCalibrationProfile,
+        sessionMonitorID: String,
+        sessionMonitorPose: HeadPose
+    ) -> [String: HeadPose]? {
+        guard let sessionMonitorOffset = profile.relativeMonitors[sessionMonitorID] else {
+            return nil
+        }
+
+        let sessionAnchorPose = sessionMonitorPose.subtracting(sessionMonitorOffset)
+        return activateProfile(profile, sessionAnchorPose: sessionAnchorPose)
+    }
 }

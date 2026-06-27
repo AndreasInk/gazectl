@@ -73,4 +73,43 @@ struct CalibrationStoreTests {
         #expect(active["10"] == HeadPose(yaw: 4, pitch: -1, roll: 6))
         #expect(active["20"] == HeadPose(yaw: 29, pitch: 2, roll: 4))
     }
+
+    @Test
+    func activatesAirPodsProfileFromAnyCalibratedMonitorPose() throws {
+        let profile = AirPodsCalibrationProfile(
+            anchorMonitorID: "10",
+            relativeMonitors: [
+                "10": .zero,
+                "20": HeadPose(yaw: 25, pitch: 3, roll: -2)
+            ]
+        )
+
+        let active = try #require(AirPodsCalibrationMath.activateProfile(
+            profile,
+            sessionMonitorID: "20",
+            sessionMonitorPose: HeadPose(yaw: 30, pitch: 5, roll: 4)
+        ))
+
+        #expect(active["10"] == HeadPose(yaw: 5, pitch: 2, roll: 6))
+        #expect(active["20"] == HeadPose(yaw: 30, pitch: 5, roll: 4))
+    }
+
+    @Test
+    func activatingAirPodsProfileRequiresCalibratedMonitorPose() {
+        let profile = AirPodsCalibrationProfile(
+            anchorMonitorID: "10",
+            relativeMonitors: [
+                "10": .zero,
+                "20": HeadPose(yaw: 25, pitch: 3, roll: -2)
+            ]
+        )
+
+        let active = AirPodsCalibrationMath.activateProfile(
+            profile,
+            sessionMonitorID: "30",
+            sessionMonitorPose: HeadPose(yaw: 30, pitch: 5, roll: 4)
+        )
+
+        #expect(active == nil)
+    }
 }
